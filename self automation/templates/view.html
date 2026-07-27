@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ filename }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='view.css') }}">
+</head>
+<body>
+
+<!-- Delete Confirm Modal -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+        <span class="modal-icon">🗑️</span>
+        <div class="modal-title" id="modalTitle">Delete rows?</div>
+        <div class="modal-desc"  id="modalDesc">These rows will be permanently removed from the file.</div>
+        <div class="modal-actions">
+            <button class="modal-cancel"  id="modalCancel">Cancel</button>
+            <button class="modal-confirm" id="modalConfirm">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Row Modal -->
+<div class="modal-overlay" id="addRowOverlay">
+    <div class="modal" style="max-width:480px;">
+        <span class="modal-icon">➕</span>
+        <div class="modal-title">Add New Row</div>
+        <div class="modal-desc">Fill in the fields below. All fields are optional.</div>
+        <div id="addRowFields" style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px;max-height:340px;overflow-y:auto;"></div>
+        <div class="modal-actions">
+            <button class="modal-cancel" id="addRowCancel">Cancel</button>
+            <button class="modal-confirm" id="addRowConfirm">Add Row</button>
+        </div>
+    </div>
+</div>
+
+<!-- Message Template Modal -->
+<div class="modal-overlay" id="senderInfoOverlay">
+    <div class="modal" style="max-width:460px;">
+        <span class="modal-icon">✉️</span>
+        <div class="modal-title">Message</div>
+        <div class="modal-desc">Type your message below. Use <code style="background:var(--surface2);padding:1px 6px;border-radius:4px;font-size:12px;">{name}</code> to automatically insert the contact's name.</div>
+        <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:24px;">
+            <div class="add-row-field">
+                <label>Message</label>
+                <textarea id="senderName"
+                    placeholder="e.g. Hi {name}! Here is our latest update for you."
+                    rows="5"
+                    style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--font);font-size:13px;outline:none;resize:vertical;transition:border-color 0.15s;width:100%;"></textarea>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button class="modal-cancel" id="senderInfoCancel">Cancel</button>
+            <button class="modal-confirm" id="senderInfoConfirm" style="background:var(--success);box-shadow:0 4px 12px rgba(46,204,138,0.3);">Send WhatsApp →</button>
+        </div>
+    </div>
+</div>
+
+<!-- Send Progress Modal -->
+<div class="modal-overlay" id="sendProgressOverlay">
+    <div class="modal" style="max-width:440px;">
+        <span class="modal-icon" id="sendProgressIcon">✉️</span>
+        <div class="modal-title" id="sendProgressTitle">Sending messages…</div>
+        <div class="modal-desc"  id="sendProgressDesc">Please keep this tab open.</div>
+        <div class="send-progress-wrap">
+            <div class="send-progress-bar" id="sendProgressBar" style="width:0%"></div>
+        </div>
+        <div class="send-progress-label" id="sendProgressLabel">0 / 0</div>
+        <div class="send-log" id="sendLog"></div>
+        <div class="modal-actions" id="sendDoneActions" style="display:none;margin-top:16px;">
+            <button class="modal-confirm" id="sendDoneBtn">Done</button>
+        </div>
+    </div>
+</div>
+
+<!-- Save Toast -->
+<div class="save-toast" id="saveToast"></div>
+
+<!-- Main Form -->
+<form action="/send" method="POST" id="sendForm">
+<input type="hidden" name="filename" value="{{ filename }}">
+
+<!-- Topbar -->
+<div class="topbar">
+    <a href="/" class="back-btn">← Back</a>
+    <div class="topbar-title">{{ filename }}</div>
+    <div class="selected-count" id="selectedCount"></div>
+    <button type="button" class="add-row-btn" id="addRowBtn">Add Row</button>
+    <button type="button" class="delete-rows-btn" id="deleteRowsBtn">Delete</button>
+    <button type="submit" class="send-btn" id="sendBtn" disabled>✉ Send WhatsApp</button>
+</div>
+
+<div class="content">
+<div class="table-wrapper">
+
+    <!-- Header bar -->
+    <div class="table-header-bar">
+        <label>
+            <input type="checkbox" class="cb" id="selectAll"> Select All
+        </label>
+        <span class="row-count" id="rowCountEl">{{ data|length }} records</span>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="stats-bar">
+        {% set ok_count = data | selectattr('_phone_status', 'equalto', 'ok') | list | length %}
+        <span class="stat-pill">Total <b>{{ data|length }}</b></span>
+        <span class="stat-pill green">Valid <b>{{ ok_count }}</b></span>
+        <span class="stat-pill red">Invalid / Empty <b>{{ data|length - ok_count }}</b></span>
+        {% if has_sent_col %}
+        <span class="stat-pill" style="background:rgba(74,108,247,0.1);color:var(--accent2);border:1px solid rgba(74,108,247,0.2);">
+            Sent <b>{{ sent_count }}</b> / {{ total_count }}
+        </span>
+        <a href="/view?file={{ filename }}&show_all={{ '0' if show_all == '1' else '1' }}"
+           class="stat-pill"
+           style="text-decoration:none;cursor:pointer;background:var(--surface2);border:1px solid var(--border);color:var(--text-2);">
+            {{ 'Show All' if show_all != '1' else 'Hide Sent' }}
+        </a>
+        {% endif %}
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="search-input" id="tableSearch" placeholder="Search all columns…" autocomplete="off">
+        </div>
+        <div class="filter-wrap">
+            <span class="filter-label">Filter by</span>
+            <select class="filter-select" id="filterCol">
+                <option value="">— Column —</option>
+                {% for col in columns %}
+                <option value="{{ loop.index0 + 1 }}">{{ col }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" class="filter-input" id="filterVal" placeholder="Filter value…" autocomplete="off">
+        </div>
+        <button type="button" class="clear-btn" id="clearFilters">✕ Clear</button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-scroll" id="tableScroll">
+        <table>
+            <thead>
+                <tr>
+                    <th>Select</th>
+                    {% for col in columns %}
+                    <th>{{ col }}</th>
+                    {% endfor %}
+                    <th class="col-phone">📱 Cleaned Phone{% if tel_col2 %} <span style="font-weight:400;opacity:0.6;font-size:10px;">(auto-pick)</span>{% endif %}</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                {% if data %}
+                    {% for row in data %}
+                    <tr data-index="{{ row.index }}">
+                        <td>
+                            <input type="checkbox"
+                                   class="cb row-cb"
+                                   name="selected"
+                                   value="{{ row._cleaned_phone }}||{{ row.name }}||{{ row.index }}"
+                                   {% if row._phone_status != 'ok' %}disabled title="Phone status: {{ row._phone_status }}"{% endif %}
+                                   onclick="event.stopPropagation()">
+                        </td>
+                        {% for col in columns %}
+                        <td class="editable" data-col="{{ col }}" title="{{ row[col] }}">
+                            {% set val = row[col] | string %}
+                            {% if val.lower().startswith('http://') or val.lower().startswith('https://') %}
+                                <a href="{{ val }}" target="_blank" rel="noopener noreferrer">{{ val }}</a>
+                            {% else %}
+                                {{ row[col] }}
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td class="phone-cell {{ row._phone_status }}">
+                            {% if row._phone_status == 'ok' %}
+                                ✔ {{ row._cleaned_phone }}
+                                {% if tel_col2 and row._phone_col %}
+                                <span style="font-size:10px;opacity:0.5;margin-left:4px;">({{ row._phone_col }})</span>
+                                {% endif %}
+                            {% elif row._phone_status == 'landline' %}
+                                ☎ Landline
+                            {% elif row._phone_status == 'empty' %}
+                                — Empty
+                            {% elif row._phone_status == 'no_col' %}
+                                ⚠ No tel column
+                            {% else %}
+                                ✘ {{ row._phone_status }}
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="row-del-btn" title="Delete row"
+                                    onclick="event.stopPropagation(); openRowDelete(this)">🗑</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="{{ columns|length + 3 }}" class="empty">No data found</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Custom scrollbar -->
+    <div class="custom-scrollbar-track" id="scrollbarTrack">
+        <div class="custom-scrollbar-thumb" id="scrollbarThumb"></div>
+    </div>
+
+</div>
+</div>
+
+</form>
+
+<!-- Infinite scroll sentinel -->
+<div id="scrollSentinel" style="height:1px;"></div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────
+const filename      = {{ filename | tojson }};
+const selectAll     = document.getElementById('selectAll');
+const sendBtn       = document.getElementById('sendBtn');
+const countEl       = document.getElementById('selectedCount');
+const rowCountEl    = document.getElementById('rowCountEl');
+const tableSearch   = document.getElementById('tableSearch');
+const filterCol     = document.getElementById('filterCol');
+const filterVal     = document.getElementById('filterVal');
+const clearBtn      = document.getElementById('clearFilters');
+const deleteRowsBtn = document.getElementById('deleteRowsBtn');
+const tableScroll   = document.getElementById('tableScroll');
+const saveToast     = document.getElementById('saveToast');
+const overlay       = document.getElementById('modalOverlay');
+const modalTitle    = document.getElementById('modalTitle');
+const modalDesc     = document.getElementById('modalDesc');
+const modalConfirm  = document.getElementById('modalConfirm');
+const modalCancel   = document.getElementById('modalCancel');
+
+let totalRows   = {{ data|length }};
+let pendingRows = [];
+let toastTimer  = null;
+
+// ── Checkbox helpers ───────────────────────────────────────
+function getVisibleBoxes() {
+    return [...document.querySelectorAll('tbody tr:not(.hidden):not(.not-revealed) .row-cb')];
+}
+
+function updateCount() {
+    const checked = document.querySelectorAll('.row-cb:checked').length;
+    countEl.textContent = checked > 0 ? `${checked} selected` : '';
+    sendBtn.disabled = checked === 0;
+    deleteRowsBtn.classList.toggle('visible', checked > 0);
+    deleteRowsBtn.textContent = checked > 0 ? `Delete (${checked})` : 'Delete';
+}
+
+function syncSelectAll() {
+    const boxes = getVisibleBoxes().filter(b => !b.disabled);
+    const allChecked  = boxes.length > 0 && boxes.every(b => b.checked);
+    const someChecked = boxes.some(b => b.checked);
+    selectAll.checked       = allChecked;
+    selectAll.indeterminate = someChecked && !allChecked;
+}
+
+selectAll.addEventListener('change', () => {
+    getVisibleBoxes().forEach(cb => {
+        if (!cb.disabled) {
+            cb.checked = selectAll.checked;
+            cb.closest('tr').classList.toggle('selected', selectAll.checked);
+        }
+    });
+    updateCount();
+});
+
+document.querySelectorAll('.row-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+        cb.closest('tr').classList.toggle('selected', cb.checked);
+        syncSelectAll();
+        updateCount();
+    });
+});
+
+document.getElementById('tableBody').addEventListener('click', e => {
+    const tr = e.target.closest('tr');
+    if (!tr || e.target.closest('button') || e.target.closest('input') || e.target.closest('td.editing')) return;
+    const cb = tr.querySelector('.row-cb');
+    if (!cb || cb.disabled) return;
+    cb.checked = !cb.checked;
+    tr.classList.toggle('selected', cb.checked);
+    syncSelectAll();
+    updateCount();
+});
+
+// ── Search + Filter ────────────────────────────────────────
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function highlight(html, term) {
+    const re = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
+    return html.replace(re, '<mark>$1</mark>');
+}
+
+function applyFilters() {
+    const q      = tableSearch.value.trim().toLowerCase();
+    const colIdx = parseInt(filterCol.value) || 0;
+    const fval   = filterVal.value.trim().toLowerCase();
+    const rows   = [...document.querySelectorAll('#tableBody tr')];
+    let visible  = 0;
+
+    rows.forEach(tr => {
+        tr.classList.remove('not-revealed');
+        const tds     = [...tr.querySelectorAll('td')];
+        const dataTds = tds.slice(1, tds.length - 2);
+
+        const matchSearch = !q    || dataTds.some(td => td.textContent.toLowerCase().includes(q));
+        const matchFilter = !fval
+            ? true
+            : colIdx
+                ? (tds[colIdx] && tds[colIdx].textContent.toLowerCase().includes(fval))
+                : dataTds.some(td => td.textContent.toLowerCase().includes(fval));
+
+        const show = matchSearch && matchFilter;
+        tr.classList.toggle('hidden', !show);
+        if (show) visible++;
+
+        dataTds.forEach((td, i) => {
+            if (td.classList.contains('editing')) return;
+            const raw = td.getAttribute('title') || td.textContent;
+            if (!show) { td.innerHTML = escHtml(raw); return; }
+            let html = escHtml(raw);
+            if (q)    html = highlight(html, q);
+            if (fval && (!colIdx || colIdx === i + 1)) html = highlight(html, fval);
+            td.innerHTML = html;
+        });
+    });
+
+    rowCountEl.textContent = (q || fval)
+        ? `Showing ${visible} of ${totalRows} records`
+        : `${totalRows} records`;
+
+    syncSelectAll();
+}
+
+tableSearch.addEventListener('input',  applyFilters);
+filterVal.addEventListener('input',    applyFilters);
+filterCol.addEventListener('change',   applyFilters);
+clearBtn.addEventListener('click', () => {
+    tableSearch.value = '';
+    filterCol.value   = '';
+    filterVal.value   = '';
+    applyFilters();
+});
+
+// ── Delete modal ───────────────────────────────────────────
+function openModal(rows) {
+    pendingRows = rows;
+    if (rows.length === 1) {
+        modalTitle.textContent = 'Delete this row?';
+        modalDesc.textContent  = 'This row will be permanently removed from the file.';
+    } else {
+        modalTitle.textContent = `Delete ${rows.length} rows?`;
+        modalDesc.textContent  = `These ${rows.length} rows will be permanently removed from the file.`;
+    }
+    overlay.classList.add('open');
+}
+
+function closeModal() {
+    overlay.classList.remove('open');
+    pendingRows = [];
+}
+
+modalCancel.addEventListener('click', closeModal);
+overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+modalConfirm.addEventListener('click', async () => {
+    if (!pendingRows.length) return;
+    const rows    = [...pendingRows];
+    const indices = rows.map(tr => tr.dataset.index);
+    closeModal();
+
+    const fd = new FormData();
+    fd.append('filename', filename);
+    indices.forEach(i => fd.append('indices', i));
+
+    const res = await fetch('/delete_rows', { method: 'POST', body: fd });
+    if (res.ok) {
+        rows.forEach(tr => tr.remove());
+        totalRows -= rows.length;
+        rowCountEl.textContent = `${totalRows} records`;
+        updateCount();
+        syncSelectAll();
+        showToast(`Deleted ${rows.length} row${rows.length > 1 ? 's' : ''}`);
+    } else {
+        showToast('✗ Delete failed', true);
+    }
+});
+
+function openRowDelete(btn) { openModal([btn.closest('tr')]); }
+
+deleteRowsBtn.addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('.row-cb:checked')].map(cb => cb.closest('tr'));
+    if (checked.length) openModal(checked);
+});
+
+// ── Toast ──────────────────────────────────────────────────
+function showToast(msg, isError = false) {
+    saveToast.textContent = msg;
+    saveToast.classList.toggle('error', isError);
+    saveToast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => saveToast.classList.remove('show'), 2400);
+}
+
+// ── Inline cell editing ────────────────────────────────────
+async function saveCell(rowIdx, col, value) {
+    try {
+        const res = await fetch('/update_cell', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, row: parseInt(rowIdx), col, value })
+        });
+        if (!res.ok) throw new Error();
+        showToast('Saved');
+    } catch {
+        showToast('✗ Save failed', true);
+    }
+}
+
+function makeEditable(td) {
+    if (td.classList.contains('editing')) return;
+    const tr       = td.closest('tr');
+    const rowIdx   = tr.dataset.index;
+    const col      = td.dataset.col;
+    const original = td.getAttribute('title') || td.textContent.trim();
+
+    td.classList.add('editing');
+    const input = document.createElement('input');
+    input.type  = 'text';
+    input.value = original;
+    td.textContent = '';
+    td.appendChild(input);
+    input.focus();
+    input.select();
+
+    function commit() {
+        const newVal = input.value.trim();
+        td.classList.remove('editing');
+        td.textContent = newVal;
+        td.setAttribute('title', newVal);
+        if (newVal !== original) saveCell(rowIdx, col, newVal);
+    }
+    function cancel() {
+        td.classList.remove('editing');
+        td.textContent = original;
+    }
+
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { input.removeEventListener('blur', commit); cancel(); }
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            input.blur();
+            const all  = [...document.querySelectorAll('tbody tr:not(.hidden) td.editable')];
+            const idx  = all.indexOf(td);
+            const next = all[e.shiftKey ? idx - 1 : idx + 1];
+            if (next) makeEditable(next);
+        }
+        e.stopPropagation();
+    });
+    input.addEventListener('click', e => e.stopPropagation());
+}
+
+document.querySelectorAll('#tableBody tr').forEach(tr => {
+    tr.querySelectorAll('td.editable').forEach(td => {
+        td.addEventListener('click', e => { e.stopPropagation(); makeEditable(td); });
+    });
+});
+
+// ── Custom scrollbar ───────────────────────────────────────
+const scrollbarTrack = document.getElementById('scrollbarTrack');
+const scrollbarThumb = document.getElementById('scrollbarThumb');
+
+function updateThumb() {
+    const ratio  = tableScroll.clientWidth / tableScroll.scrollWidth;
+    const thumbW = Math.max(ratio * scrollbarTrack.clientWidth, 40);
+    const maxScr = tableScroll.scrollWidth - tableScroll.clientWidth;
+    const maxL   = scrollbarTrack.clientWidth - thumbW;
+    const left   = maxScr > 0 ? (tableScroll.scrollLeft / maxScr) * maxL : 0;
+    scrollbarThumb.style.width     = thumbW + 'px';
+    scrollbarThumb.style.transform = `translateX(${left}px)`;
+    scrollbarTrack.style.display   = ratio >= 1 ? 'none' : 'block';
+}
+
+let dragging = false, dragStartX = 0, dragStartScroll = 0;
+scrollbarThumb.addEventListener('pointerdown', e => {
+    dragging = true; dragStartX = e.clientX; dragStartScroll = tableScroll.scrollLeft;
+    scrollbarThumb.setPointerCapture(e.pointerId); e.preventDefault();
+});
+scrollbarThumb.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx   = e.clientX - dragStartX;
+    const maxL = scrollbarTrack.clientWidth - scrollbarThumb.offsetWidth;
+    const maxS = tableScroll.scrollWidth - tableScroll.clientWidth;
+    tableScroll.scrollLeft = dragStartScroll + (dx / maxL) * maxS;
+});
+scrollbarThumb.addEventListener('pointerup',     () => { dragging = false; });
+scrollbarThumb.addEventListener('pointercancel', () => { dragging = false; });
+scrollbarTrack.addEventListener('click', e => {
+    if (e.target === scrollbarThumb) return;
+    const rect = scrollbarTrack.getBoundingClientRect();
+    const maxS = tableScroll.scrollWidth - tableScroll.clientWidth;
+    tableScroll.scrollLeft = ((e.clientX - rect.left) / scrollbarTrack.clientWidth) * maxS;
+});
+tableScroll.addEventListener('scroll', updateThumb);
+window.addEventListener('resize', updateThumb);
+requestAnimationFrame(updateThumb);
+
+// ── Infinite scroll ────────────────────────────────────────
+const PAGE    = 50;
+const allRows = [...document.querySelectorAll('#tableBody tr')];
+let   revealed = 0;
+
+function revealRows(n) {
+    const end = Math.min(revealed + n, allRows.length);
+    for (let i = revealed; i < end; i++) allRows[i].classList.remove('not-revealed');
+    revealed = end;
+}
+allRows.forEach(tr => tr.classList.add('not-revealed'));
+revealRows(PAGE);
+
+new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting && revealed < allRows.length) revealRows(PAGE);
+}, { rootMargin: '300px' }).observe(document.getElementById('scrollSentinel'));
+
+// ── Add Row ────────────────────────────────────────────────
+const addRowBtn     = document.getElementById('addRowBtn');
+const addRowOverlay = document.getElementById('addRowOverlay');
+const addRowCancel  = document.getElementById('addRowCancel');
+const addRowConfirm = document.getElementById('addRowConfirm');
+const addRowFields  = document.getElementById('addRowFields');
+const columns       = {{ columns | tojson }};
+
+function openAddRow() {
+    // Build input fields for each column
+    addRowFields.innerHTML = columns.map(col => `
+        <div class="add-row-field">
+            <label>${col}</label>
+            <input type="text" data-col="${col}" placeholder="Leave empty if unknown">
+        </div>
+    `).join('');
+    addRowOverlay.classList.add('open');
+    // Focus first input
+    const first = addRowFields.querySelector('input');
+    if (first) first.focus();
+}
+
+function closeAddRow() {
+    addRowOverlay.classList.remove('open');
+}
+
+addRowBtn.addEventListener('click', openAddRow);
+addRowCancel.addEventListener('click', closeAddRow);
+addRowOverlay.addEventListener('click', e => { if (e.target === addRowOverlay) closeAddRow(); });
+
+addRowConfirm.addEventListener('click', async () => {
+    const inputs = addRowFields.querySelectorAll('input');
+    const rowData = {};
+    inputs.forEach(input => {
+        rowData[input.dataset.col.toLowerCase()] = input.value.trim();
+    });
+
+    try {
+        const r = await fetch('/add_row', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, row: rowData })
+        });
+        const data = await r.json();
+
+        if (data.ok) {
+            closeAddRow();
+            showToast('Row added');
+            // Reload to show new row
+            setTimeout(() => window.location.reload(), 800);
+        } else {
+            showToast((data.error || 'Failed to add row'), true);
+        }
+    } catch (err) {
+        showToast('Something went wrong', true);
+    }
+});
+
+// Allow Enter key to submit
+addRowFields.addEventListener('keydown', e => {
+    if (e.key === 'Enter') addRowConfirm.click();
+});
+
+// ── Message Template Modal ─────────────────────────────────
+const senderInfoOverlay = document.getElementById('senderInfoOverlay');
+const senderInfoCancel  = document.getElementById('senderInfoCancel');
+const senderInfoConfirm = document.getElementById('senderInfoConfirm');
+const messageInput      = document.getElementById('senderName'); // textarea
+
+// Restore saved message from last session
+messageInput.value = localStorage.getItem('waMessage') || '';
+
+function openSenderInfo() {
+    senderInfoOverlay.classList.add('open');
+    setTimeout(() => messageInput.focus(), 50);
+}
+function closeSenderInfo() {
+    senderInfoOverlay.classList.remove('open');
+}
+
+senderInfoCancel.addEventListener('click', closeSenderInfo);
+senderInfoOverlay.addEventListener('click', e => { if (e.target === senderInfoOverlay) closeSenderInfo(); });
+
+// Intercept send button — open message modal first
+document.getElementById('sendForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const checked = document.querySelectorAll('.row-cb:checked');
+    if (checked.length === 0) return;
+    openSenderInfo();
+});
+
+// After confirming message, actually send
+senderInfoConfirm.addEventListener('click', async () => {
+    const messageTemplate = messageInput.value.trim();
+    if (!messageTemplate) {
+        messageInput.style.borderColor = 'var(--danger)';
+        messageInput.focus();
+        return;
+    }
+    messageInput.style.borderColor = '';
+
+    // Save for next time
+    localStorage.setItem('waMessage', messageTemplate);
+
+    closeSenderInfo();
+
+    const checked = document.querySelectorAll('.row-cb:checked');
+    if (checked.length === 0) return;
+
+    const fd = new FormData(document.getElementById('sendForm'));
+    fd.append('message_template', messageTemplate);
+
+    // Grab progress modal elements
+    const progressOverlay = document.getElementById('sendProgressOverlay');
+    const progressIcon    = document.getElementById('sendProgressIcon');
+    const progressTitle   = document.getElementById('sendProgressTitle');
+    const progressDesc    = document.getElementById('sendProgressDesc');
+    const progressBar     = document.getElementById('sendProgressBar');
+    const progressLabel   = document.getElementById('sendProgressLabel');
+    const progressLog     = document.getElementById('sendLog');
+    const doneActions     = document.getElementById('sendDoneActions');
+    const doneBtn         = document.getElementById('sendDoneBtn');
+
+    // Reset & show modal
+    progressIcon.textContent  = '✉️';
+    progressTitle.textContent = 'Sending messages…';
+    progressDesc.textContent  = 'Chrome will open automatically. Keep this tab open.';
+    progressBar.style.width   = '0%';
+    progressBar.style.background = '';
+    progressLabel.textContent = `0 / ${checked.length}`;
+    progressLog.innerHTML     = '';
+    doneActions.style.display = 'none';
+    progressOverlay.classList.add('open');
+    sendBtn.disabled = true;
+
+    try {
+        const resp   = await fetch('/send', { method: 'POST', body: fd });
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                let evt;
+                try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+                if (evt.type === 'progress') {
+                    const pct = Math.round((evt.current / evt.total) * 100);
+                    progressBar.style.width    = pct + '%';
+                    progressLabel.textContent  = `${evt.current} / ${evt.total}`;
+                    progressTitle.textContent  = `Sending… (${evt.current} of ${evt.total})`;
+
+                    const entry = document.createElement('div');
+                    entry.className = 'send-log-entry ' + (evt.status === 'ok' ? 'ok' : 'err');
+                    entry.textContent = (evt.status === 'ok' ? '✓ ' : '✗ ') + evt.message;
+                    progressLog.appendChild(entry);
+                    progressLog.scrollTop = progressLog.scrollHeight;
+
+                } else if (evt.type === 'done') {
+                    progressBar.style.width      = '100%';
+                    progressBar.style.background = evt.ok ? 'var(--success)' : 'var(--danger)';
+                    progressIcon.textContent     = evt.ok ? '✅' : '⚠️';
+                    progressTitle.textContent    = evt.ok ? 'All done!' : 'Completed with errors';
+                    progressDesc.textContent     = evt.message;
+                    doneActions.style.display    = 'flex';
+                }
+            }
+        }
+    } catch (err) {
+        progressTitle.textContent = 'Connection error';
+        progressDesc.textContent  = 'Something went wrong. Please try again.';
+        doneActions.style.display = 'flex';
+    }
+
+    sendBtn.disabled = false;
+    sendBtn.textContent = '✉ Send WhatsApp';
+
+    doneBtn.onclick = () => {
+        progressOverlay.classList.remove('open');
+        window.location.reload();
+    };
+});
+</script>
+
+</body>
+</html> 

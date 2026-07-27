@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Excel CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='index.css') }}">
+</head>
+<body>
+
+<!-- Confirm Delete Modal -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+        <div class="modal-icon">🗑️</div>
+        <div class="modal-title" id="modalTitle">Delete file?</div>
+        <div class="modal-desc" id="modalDesc">This action cannot be undone.</div>
+        <div class="modal-actions">
+            <button class="modal-cancel" id="modalCancel">Cancel</button>
+            <button class="modal-confirm" id="modalConfirm">Delete</button>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="header">
+        <div class="header-badge">Excel CRM</div>
+        <h1>Contact Manager</h1>
+        <p class="subtitle">Upload Excel files to manage and send contacts in bulk</p>
+    </div>
+
+    <!-- Upload Card -->
+    <div class="card">
+        <div class="card-label">Upload File</div>
+        <form action="/upload" method="POST" enctype="multipart/form-data" id="uploadForm">
+            <div class="upload-zone" id="dropZone">
+                <input type="file" name="file" accept=".xlsx,.xls" id="fileInput" required>
+                <div class="upload-icon">📊</div>
+                <div class="upload-text">Drag & drop a file here, or click to browse</div>
+                <div class="upload-sub">Supports .xlsx / .xls format</div>
+                <button type="submit" class="upload-btn" onclick="event.stopPropagation()">
+                    ↑ Upload File
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Files Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-label">Uploaded Files</div>
+            <button class="delete-selected-btn" id="deleteSelectedBtn">🗑 Delete Selected</button>
+        </div>
+        <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="search-input" id="fileSearch" placeholder="Search files…" autocomplete="off">
+        </div>
+        <div class="file-count" id="fileCount"></div>
+        <div class="file-list" id="fileList">
+            {% if files %}
+                {% for f in files %}
+                <div class="file-item" data-name="{{ f | lower }}">
+                    <input type="checkbox" class="file-cb" data-filename="{{ f }}">
+                    <div class="file-left">
+                        <div class="file-icon">📄</div>
+                        <div>
+                            <div class="file-name" data-raw="{{ f }}">{{ f }}</div>
+                            <span class="file-tag">Excel</span>
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <a href="/view?file={{ f }}" class="open-btn">Open →</a>
+                        <button class="del-one-btn" data-filename="{{ f }}" title="Delete">🗑</button>
+                    </div>
+                </div>
+                {% endfor %}
+                <div class="no-results" id="noResults">No matching files found</div>
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">🗂️</div>
+                    No files yet — upload one to get started
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+    // ── Upload / drag ─────────────────────────────────────────
+    const zone  = document.getElementById('dropZone');
+    const input = document.getElementById('fileInput');
+
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+    zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) input.files = e.dataTransfer.files;
+    });
+    input.addEventListener('change', () => {
+        if (input.files.length) zone.querySelector('.upload-text').textContent = input.files[0].name;
+    });
+
+    // ── Search ────────────────────────────────────────────────
+    const fileSearch = document.getElementById('fileSearch');
+    const fileItems  = () => document.querySelectorAll('.file-item[data-name]');
+    const noResults  = document.getElementById('noResults');
+    const fileCount  = document.getElementById('fileCount');
+
+    function updateCount() {
+        const items = fileItems();
+        if (fileCount && items.length) {
+            const q = fileSearch ? fileSearch.value.trim() : '';
+            const visible = [...items].filter(i => !i.classList.contains('hidden')).length;
+            fileCount.textContent = q
+                ? `${visible} of ${items.length} file${items.length !== 1 ? 's' : ''} found`
+                : `${items.length} file${items.length !== 1 ? 's' : ''}`;
+        }
+    }
+
+    updateCount();
+
+    fileSearch && fileSearch.addEventListener('input', () => {
+        const q = fileSearch.value.trim().toLowerCase();
+        let visible = 0;
+        fileItems().forEach(item => {
+            const nameEl = item.querySelector('.file-name');
+            const raw = nameEl.dataset.raw;
+            const match = !q || raw.toLowerCase().includes(q);
+            item.classList.toggle('hidden', !match);
+            if (match) {
+                if (q) {
+                    const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+                    nameEl.innerHTML = raw.replace(re, '<span class="highlight">$1</span>');
+                } else {
+                    nameEl.textContent = raw;
+                }
+                visible++;
+            } else {
+                nameEl.textContent = raw;
+            }
+        });
+        if (noResults) noResults.style.display = (visible === 0 && fileItems().length > 0) ? 'block' : 'none';
+        updateCount();
+    });
+
+    // ── Delete modal ──────────────────────────────────────────
+    const overlay      = document.getElementById('modalOverlay');
+    const modalTitle   = document.getElementById('modalTitle');
+    const modalDesc    = document.getElementById('modalDesc');
+    const modalConfirm = document.getElementById('modalConfirm');
+    const modalCancel  = document.getElementById('modalCancel');
+    let pendingDelete  = null; // { filenames: [], items: [] }
+
+    function openModal(filenames, items) {
+        pendingDelete = { filenames, items };
+        if (filenames.length === 1) {
+            modalTitle.textContent = `Delete "${filenames[0]}"?`;
+            modalDesc.textContent  = 'This file will be permanently deleted and cannot be recovered.';
+        } else {
+            modalTitle.textContent = `Delete ${filenames.length} files?`;
+            modalDesc.textContent  = 'These files will be permanently deleted and cannot be recovered.';
+        }
+        overlay.classList.add('open');
+    }
+
+    function closeModal() {
+        overlay.classList.remove('open');
+        pendingDelete = null;
+    }
+
+    modalCancel.addEventListener('click', closeModal);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+
+    modalConfirm.addEventListener('click', async () => {
+        if (!pendingDelete) return;
+        const { filenames, items } = pendingDelete;
+        closeModal();
+
+        // POST to /delete for each file
+        for (const filename of filenames) {
+            const fd = new FormData();
+            fd.append('filename', filename);
+            await fetch('/delete', { method: 'POST', body: fd });
+        }
+
+        // Remove rows from DOM
+        items.forEach(item => item.remove());
+        syncDeleteBtn();
+        updateCount();
+
+        // Show empty state if no files left
+        if (!fileItems().length) {
+            document.getElementById('fileList').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">🗂️</div>
+                    No files yet — upload one to get started
+                </div>`;
+        }
+    });
+
+    // ── Single delete button ──────────────────────────────────
+    document.querySelectorAll('.del-one-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const filename = btn.dataset.filename;
+            const item = btn.closest('.file-item');
+            openModal([filename], [item]);
+        });
+    });
+
+    // ── Checkbox + bulk delete ────────────────────────────────
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+
+    function syncDeleteBtn() {
+        const checked = document.querySelectorAll('.file-cb:checked');
+        deleteSelectedBtn.classList.toggle('visible', checked.length > 0);
+        deleteSelectedBtn.textContent = checked.length > 0
+            ? `🗑 Delete Selected (${checked.length})`
+            : '🗑 Delete Selected';
+    }
+
+    document.querySelectorAll('.file-cb').forEach(cb => {
+        cb.addEventListener('change', () => {
+            cb.closest('.file-item').classList.toggle('selected-for-delete', cb.checked);
+            syncDeleteBtn();
+        });
+    });
+
+    deleteSelectedBtn.addEventListener('click', () => {
+        const checked = [...document.querySelectorAll('.file-cb:checked')];
+        if (!checked.length) return;
+        const filenames = checked.map(cb => cb.dataset.filename);
+        const items = checked.map(cb => cb.closest('.file-item'));
+        openModal(filenames, items);
+    });
+</script>
+
+</body>
+</html>
