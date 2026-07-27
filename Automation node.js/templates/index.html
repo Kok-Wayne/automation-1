@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Excel CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/index.css">
+    <style>
+        .accounts-list { display:flex; flex-direction:column; gap:8px; }
+        .account-item { display:flex; align-items:center; gap:12px; background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--radius-sm); padding:12px 16px; box-shadow:var(--shadow-xs); }
+        .account-dot { width:10px; height:10px; border-radius:50%; background:var(--success); box-shadow:0 0 0 3px var(--success-soft); flex-shrink:0; }
+        .account-label { flex:1; font-size:13.5px; font-weight:600; color:var(--text); font-family:var(--mono); }
+        .account-label-input { flex:1; background:transparent; border:none; outline:none; font-size:13.5px; font-weight:600; color:var(--text); font-family:var(--mono); padding:0; }
+        .account-rename-btn { font-size:12px; color:var(--muted); background:transparent; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; transition:all 0.15s; }
+        .account-rename-btn:hover { color:var(--text); border-color:var(--border); }
+        .account-del-btn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; background:transparent; color:var(--muted); border:1px solid var(--border-soft); border-radius:8px; font-size:13px; cursor:pointer; transition:all 0.18s; flex-shrink:0; }
+        .account-del-btn:hover { color:var(--danger); border-color:rgba(232,93,93,0.3); background:var(--danger-soft); }
+        .add-account-row { display:flex; gap:8px; margin-top:12px; }
+        .add-account-input { flex:1; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 14px; color:var(--text); font-family:var(--font); font-size:13.5px; outline:none; transition:all 0.18s; }
+        .add-account-input:focus { border-color:var(--text); background:var(--surface); }
+        .add-account-btn { padding:10px 20px; background:var(--text); color:#fff; border:none; border-radius:var(--radius-sm); font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer; transition:all 0.18s; white-space:nowrap; }
+        .add-account-btn:hover { background:#2d2d50; }
+        .account-empty { text-align:center; padding:28px; color:var(--muted); font-size:13.5px; }
+    </style>
+</head>
+<body>
+
+<!-- Confirm Delete Modal -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+        <div class="modal-icon">🗑️</div>
+        <div class="modal-title" id="modalTitle">Delete?</div>
+        <div class="modal-desc" id="modalDesc">This action cannot be undone.</div>
+        <div class="modal-actions">
+            <button class="modal-cancel" id="modalCancel">Cancel</button>
+            <button class="modal-confirm" id="modalConfirm">Delete</button>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="header">
+        <div class="header-badge">Excel CRM</div>
+        <h1>Contact Manager</h1>
+        <p class="subtitle">Upload Excel files to manage and send contacts in bulk</p>
+    </div>
+
+    <!-- WhatsApp Accounts Card -->
+    <div class="card">
+        <div class="card-label">WhatsApp Accounts</div>
+        <div class="accounts-list" id="accountsList">
+            {% if accounts and accounts.length > 0 %}
+                {% for acc in accounts %}
+                <div class="account-item" data-id="{{ acc.id }}">
+                    <div class="account-dot"></div>
+                    <span class="account-label" id="label-{{ acc.id }}">{{ acc.label }}</span>
+                    <span class="account-id-badge">{{ acc.id }}</span>
+                    <button class="account-rename-btn" onclick="startRename('{{ acc.id }}')">✏ </button>
+                    <button class="account-del-btn" onclick="deleteAccount('{{ acc.id }}', '{{ acc.label }}')">🗑</button>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="account-empty" id="accountEmpty">No accounts yet — add one below</div>
+            {% endif %}
+        </div>
+        <div class="add-account-row">
+            <input type="text" class="add-account-input" id="newAccountLabel" placeholder="e.g. Sales, Support, Marketing…" autocomplete="off">
+            <button class="add-account-btn" id="addAccountBtn">+ Add Account</button>
+        </div>
+    </div>
+
+    <!-- Upload Card -->
+    <div class="card">
+        <div class="card-label">Upload File</div>
+        <form action="/upload" method="POST" enctype="multipart/form-data" id="uploadForm">
+            <div class="upload-zone" id="dropZone">
+                <input type="file" name="file" accept=".xlsx,.xls" id="fileInput" multiple required>
+                <div class="upload-icon">📊</div>
+                <div class="upload-text">Drag & drop a file here, or click to browse</div>
+                <div class="upload-sub">Supports .xlsx / .xls format</div>
+                <button type="submit" class="upload-btn" onclick="event.stopPropagation()">↑ Upload File</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Files Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-label">Uploaded Files</div>
+            <button class="delete-selected-btn" id="deleteSelectedBtn">🗑 Delete Selected</button>
+        </div>
+        <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" class="search-input" id="fileSearch" placeholder="Search files…" autocomplete="off">
+        </div>
+        <div class="file-count" id="fileCount"></div>
+        <div class="file-list" id="fileList">
+            {% if files and files.length > 0 %}
+                {% for f in files %}
+                <div class="file-item" data-name="{{ f | lower }}">
+                    <input type="checkbox" class="file-cb" data-filename="{{ f }}">
+                    <div class="file-left">
+                        <div class="file-icon">📄</div>
+                        <div>
+                            <div class="file-name" data-raw="{{ f }}">{{ f }}</div>
+                            <span class="file-tag">Excel</span>
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <a href="/view?file={{ f }}" class="open-btn">Open →</a>
+                        <button class="del-one-btn" data-filename="{{ f }}" title="Delete">🗑</button>
+                    </div>
+                </div>
+                {% endfor %}
+                <div class="no-results" id="noResults">No matching files found</div>
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">🗂️</div>
+                    No files yet — upload one to get started
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Account management ────────────────────────────────────
+const addAccountBtn   = document.getElementById('addAccountBtn');
+const newAccountLabel = document.getElementById('newAccountLabel');
+const accountsList    = document.getElementById('accountsList');
+
+addAccountBtn.addEventListener('click', addAccount);
+newAccountLabel.addEventListener('keydown', e => { if (e.key === 'Enter') addAccount(); });
+
+async function addAccount() {
+    const label = newAccountLabel.value.trim();
+    if (!label) { newAccountLabel.focus(); return; }
+    const r = await fetch('/accounts/add', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ label }) });
+    const d = await r.json();
+    if (!d.ok) return alert('Failed to add account');
+    newAccountLabel.value = '';
+    // Remove empty state if present
+    const empty = document.getElementById('accountEmpty');
+    if (empty) empty.remove();
+    // Add to DOM
+    const item = document.createElement('div');
+    item.className = 'account-item'; item.dataset.id = d.id;
+    item.innerHTML = `
+        <div class="account-dot"></div>
+        <span class="account-label" id="label-${d.id}">${d.label}</span>
+        <span class="account-id-badge">${d.id}</span>
+        <button class="account-rename-btn" onclick="startRename('${d.id}')">✏ Rename</button>
+        <button class="account-del-btn" onclick="deleteAccount('${d.id}', '${d.label}')">🗑</button>`;
+    accountsList.appendChild(item);
+}
+
+function startRename(id) {
+    const span = document.getElementById('label-' + id);
+    if (!span) return;
+    const current = span.textContent.trim();
+    const input = document.createElement('input');
+    input.className = 'account-label-input'; input.value = current;
+    span.replaceWith(input); input.focus(); input.select();
+
+    async function commit() {
+        const newLabel = input.value.trim() || current;
+        await fetch('/accounts/rename', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ id, label: newLabel }) });
+        const newSpan = document.createElement('span');
+        newSpan.className = 'account-label'; newSpan.id = 'label-' + id; newSpan.textContent = newLabel;
+        input.replaceWith(newSpan);
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = current; input.blur(); } });
+}
+
+async function deleteAccount(id, label) {
+    openModal([`Account "${label}"`], null, async () => {
+        await fetch('/accounts/delete', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ id }) });
+        const item = document.querySelector(`.account-item[data-id="${id}"]`);
+        if (item) item.remove();
+        if (!document.querySelector('.account-item')) {
+            accountsList.innerHTML = '<div class="account-empty" id="accountEmpty">No accounts yet — add one below</div>';
+        }
+    });
+}
+
+// ── Upload / drag ─────────────────────────────────────────
+const zone  = document.getElementById('dropZone');
+const input = document.getElementById('fileInput');
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('dragover'); if (e.dataTransfer.files.length) input.files = e.dataTransfer.files; });
+input.addEventListener('change', () => { if (input.files.length) zone.querySelector('.upload-text').textContent = input.files.length > 1 ? `${input.files.length} files selected` : input.files[0].name; });
+
+// ── Search ────────────────────────────────────────────────
+const fileSearch = document.getElementById('fileSearch');
+const fileItems  = () => document.querySelectorAll('.file-item[data-name]');
+const noResults  = document.getElementById('noResults');
+const fileCount  = document.getElementById('fileCount');
+
+function updateCount() {
+    const items = fileItems();
+    if (fileCount && items.length) {
+        const q = fileSearch ? fileSearch.value.trim() : '';
+        const visible = [...items].filter(i => !i.classList.contains('hidden')).length;
+        fileCount.textContent = q ? `${visible} of ${items.length} file${items.length !== 1 ? 's' : ''} found` : `${items.length} file${items.length !== 1 ? 's' : ''}`;
+    }
+}
+updateCount();
+
+fileSearch && fileSearch.addEventListener('input', () => {
+    const q = fileSearch.value.trim().toLowerCase();
+    let visible = 0;
+    fileItems().forEach(item => {
+        const nameEl = item.querySelector('.file-name');
+        const raw = nameEl.dataset.raw;
+        const match = !q || raw.toLowerCase().includes(q);
+        item.classList.toggle('hidden', !match);
+        if (match) {
+            nameEl.innerHTML = q ? raw.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<span class="highlight">$1</span>') : raw;
+            visible++;
+        } else { nameEl.textContent = raw; }
+    });
+    if (noResults) noResults.style.display = (visible === 0 && fileItems().length > 0) ? 'block' : 'none';
+    updateCount();
+});
+
+// ── Delete modal ──────────────────────────────────────────
+const overlay      = document.getElementById('modalOverlay');
+const modalTitle   = document.getElementById('modalTitle');
+const modalDesc    = document.getElementById('modalDesc');
+const modalConfirm = document.getElementById('modalConfirm');
+const modalCancel  = document.getElementById('modalCancel');
+let pendingAction  = null;
+
+function openModal(labels, items, action) {
+    pendingAction = { labels, items, action };
+    modalTitle.textContent = labels.length === 1 ? `Delete ${labels[0]}?` : `Delete ${labels.length} items?`;
+    modalDesc.textContent  = 'This action cannot be undone.';
+    overlay.classList.add('open');
+}
+function closeModal() { overlay.classList.remove('open'); pendingAction = null; }
+modalCancel.addEventListener('click', closeModal);
+overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+modalConfirm.addEventListener('click', async () => {
+    if (!pendingAction) return;
+    const { items, action } = pendingAction; closeModal();
+    if (action) { await action(); return; }
+    // File delete
+    for (const filename of pendingAction.labels) {
+        const fd = new FormData(); fd.append('filename', filename.replace(/^Delete "/, '').replace(/"$/, ''));
+        await fetch('/delete', { method: 'POST', body: fd });
+    }
+    if (items) items.forEach(i => i.remove());
+    syncDeleteBtn(); updateCount();
+    if (!fileItems().length) document.getElementById('fileList').innerHTML = '<div class="empty-state"><div class="empty-icon">🗂️</div>No files yet — upload one to get started</div>';
+});
+
+document.querySelectorAll('.del-one-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const filename = btn.dataset.filename;
+        openModal([filename], [btn.closest('.file-item')], async () => {
+            const fd = new FormData(); fd.append('filename', filename);
+            await fetch('/delete', { method: 'POST', body: fd });
+            btn.closest('.file-item').remove(); syncDeleteBtn(); updateCount();
+            if (!fileItems().length) document.getElementById('fileList').innerHTML = '<div class="empty-state"><div class="empty-icon">🗂️</div>No files yet — upload one to get started</div>';
+        });
+    });
+});
+
+const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+function syncDeleteBtn() {
+    const checked = document.querySelectorAll('.file-cb:checked');
+    deleteSelectedBtn.classList.toggle('visible', checked.length > 0);
+    deleteSelectedBtn.textContent = checked.length > 0 ? `🗑 Delete Selected (${checked.length})` : '🗑 Delete Selected';
+}
+document.querySelectorAll('.file-cb').forEach(cb => {
+    cb.addEventListener('change', () => { cb.closest('.file-item').classList.toggle('selected-for-delete', cb.checked); syncDeleteBtn(); });
+});
+deleteSelectedBtn.addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('.file-cb:checked')];
+    if (!checked.length) return;
+    const filenames = checked.map(cb => cb.dataset.filename);
+    const items = checked.map(cb => cb.closest('.file-item'));
+    openModal(filenames, items, async () => {
+        for (const f of filenames) { const fd = new FormData(); fd.append('filename', f); await fetch('/delete', { method:'POST', body:fd }); }
+        items.forEach(i => i.remove()); syncDeleteBtn(); updateCount();
+        if (!fileItems().length) document.getElementById('fileList').innerHTML = '<div class="empty-state"><div class="empty-icon">🗂️</div>No files yet — upload one to get started</div>';
+    });
+});
+</script>   
+</body>
+</html>
